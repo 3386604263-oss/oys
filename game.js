@@ -36,11 +36,12 @@
   const MERGE_TOUCH_SLACK = 4;
   const MERGE_MIN_OVERLAP = 2;
   const MAX_REVIVES = 5;
-  const BGM_VOLUME = 0.03;
-  const MERGE_VOLUME = 0.1;
+  const BGM_VOLUME = 0.05;
+  const MERGE_VOLUME = 0.2;
 
   let fruitImages = [];
   let mergeSoundPending = false;
+  let lastMergeSoundTime = 0;
   let bgmEl = null;
   let score = 0;
   let bestScore = parseInt(localStorage.getItem("suika_best") || "0", 10);
@@ -85,6 +86,9 @@
     const url = pickRandom(MANIFEST.backgrounds || []);
     if (url) {
       bgLayer.style.backgroundImage = "url(" + JSON.stringify(assetUrl(url)) + ")";
+      bgLayer.style.backgroundSize = "cover";
+      bgLayer.style.backgroundPosition = "center";
+      bgLayer.style.backgroundRepeat = "no-repeat";
     } else {
       bgLayer.style.backgroundImage = "";
     }
@@ -109,7 +113,7 @@
         bgmStarted = true;
         setTimeout(() => {
           bgmEl.muted = false;
-        }, 400);
+        }, 100);
       }).catch(err => {
         console.warn("静音播放失败:", err);
         return Promise.reject(err);
@@ -152,7 +156,7 @@
           console.log("延迟尝试静音播放也失败");
         });
       }
-    }, 200);
+    }, 300);
 
     // 用户交互时解锁音乐
     const unlock = () => {
@@ -172,7 +176,12 @@
 
   function playMergeSound() {
     if (!mergeSoundPending) return;
+    
+    const now = Date.now();
+    if (now - lastMergeSoundTime < 150) return;
+    
     mergeSoundPending = false;
+    lastMergeSoundTime = now;
 
     const pool = MANIFEST.mergeSounds || [];
     const url = pickRandom(pool);
@@ -453,7 +462,7 @@
       bestEl.textContent = bestScore;
       localStorage.setItem("suika_best", String(bestScore));
     }
-    playMergeSound();
+    mergeSoundPending = true;
     return true;
   }
 
@@ -471,7 +480,7 @@
     const x = clampDropX(level);
     createFruitBody(level, x, DROP_Y + FRUIT_DEFS[level].radius);
 
-    mergeSoundPending = true;
+    lastMergeSoundTime = 0;
     canDrop = false;
     pendingLevel = null;
 
@@ -671,6 +680,7 @@
       if (!loopRunning) return;
       Engine.update(engine, 1000 / 60);
       checkMerges();
+      playMergeSound();
       drawScene();
       checkGameOver();
       animId = requestAnimationFrame(tick);
@@ -680,7 +690,7 @@
 
   function resize() {
     const maxW = Math.min(400, window.innerWidth - 32);
-    const maxH = Math.min(window.innerHeight * 0.58, 520);
+    const maxH = Math.min(window.innerHeight * 0.75, 680);
     width = Math.max(280, maxW);
     height = Math.max(360, maxH);
     dangerY = height * DANGER_Y_RATIO;
@@ -720,6 +730,7 @@
 
     applyRandomBackground();
     mergeSoundPending = false;
+    lastMergeSoundTime = 0;
     startLoop();
   }
 
