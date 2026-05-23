@@ -36,7 +36,7 @@
   const MERGE_TOUCH_SLACK = 4;
   const MERGE_MIN_OVERLAP = 2;
   const MAX_REVIVES = 5;
-  const BGM_VOLUME = 0.1;
+  const BGM_VOLUME = 0.05;
   const MERGE_VOLUME = 0.4;
 
   let fruitImages = [];
