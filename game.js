@@ -32,7 +32,6 @@
   const DANGER_Y_RATIO = 0.14;
   const DROP_Y = 82;
   const DROP_COOLDOWN = 500;
-  /** 合并判定：贴住容差（px），负值表示需嵌入的最小重叠 */
   const MERGE_TOUCH_SLACK = 4;
   const MERGE_MIN_OVERLAP = 2;
   const MAX_REVIVES = 5;
@@ -80,14 +79,51 @@
     return arr[Math.floor(Math.random() * arr.length)];
   }
 
-  /** 每次随机选一张背景，铺满整页 */
+  /** 每次随机选一张背景，铺满整页，并优化手机清晰度 */
   function applyRandomBackground() {
+    // 强制设置背景样式，避免拉伸模糊
+    bgLayer.style.backgroundSize = "cover";
+    bgLayer.style.backgroundPosition = "center";
+    bgLayer.style.backgroundRepeat = "no-repeat";
+    bgLayer.style.backgroundColor = "#2b2b2b"; // 默认底色
+
     const url = pickRandom(MANIFEST.backgrounds || []);
     if (url) {
       bgLayer.style.backgroundImage = "url(" + JSON.stringify(assetUrl(url)) + ")";
     } else {
-      bgLayer.style.backgroundImage = "";
+      bgLayer.style.backgroundImage = "none";
     }
+  }
+
+  // 预加载音效（确保合并时能快速播放）
+  let preloadedSound = null;
+  function preloadMergeSound() {
+    const pool = MANIFEST.mergeSounds || [];
+    if (!pool.length) return;
+    const url = pickRandom(pool);
+    if (!url) return;
+    const audio = new Audio(assetUrl(url));
+    audio.load();
+    preloadedSound = audio;
+  }
+
+  function playMergeSound() {
+    if (!mergeSoundPending) return;
+    mergeSoundPending = false;
+
+    // 优先使用预加载的音效，否则动态创建
+    let audio = preloadedSound;
+    if (!audio) {
+      const pool = MANIFEST.mergeSounds || [];
+      const url = pickRandom(pool);
+      if (!url) return;
+      audio = new Audio(assetUrl(url));
+    }
+    audio.volume = MERGE_VOLUME;
+    audio.currentTime = 0;
+    audio.play().catch(err => console.warn("合并音效播放失败", err));
+    // 异步重新预加载一个备用实例（不影响当前播放）
+    setTimeout(() => preloadMergeSound(), 100);
   }
 
   function initBgm() {
@@ -103,63 +139,32 @@
       bgmEl.load();
     }
 
-    function tryPlayMuted() {
-      bgmEl.muted = true;
-      return bgmEl.play().then(() => {
-        bgmStarted = true;
-        setTimeout(() => {
-          bgmEl.muted = false;
-        }, 400);
-      });
-    }
-
-    function tryPlayNormal() {
-      bgmEl.muted = false;
-      return bgmEl.play().then(() => {
-        bgmStarted = true;
-      });
-    }
-
     bgmEl.volume = BGM_VOLUME;
     bgmEl.loop = true;
-
+    bgmEl.muted = true;   // 初始静音，绕过自动播放策略
     loadNext();
 
+    // 一旦可以播放，立即静音播放
+    bgmEl.addEventListener("canplaythrough", () => {
+      bgmEl.play().then(() => {
+        bgmStarted = true;
+        console.log("背景音乐静音自动播放成功");
+      }).catch(e => console.warn("自动播放失败", e));
+    }, { once: true });
+
     bgmEl.addEventListener("error", () => loadNext());
-    bgmEl.addEventListener(
-      "canplaythrough",
-      () => {
-        tryPlayMuted().catch(() => {});
-      },
-      { once: true }
-    );
 
-    setTimeout(() => {
-      if (!bgmStarted) tryPlayMuted().catch(() => {});
-    }, 300);
-
+    // 全局只解锁一次：用户任意交互时取消静音
     const unlock = () => {
-      if (!bgmStarted) {
-        tryPlayNormal().catch(() => {});
-      } else if (bgmEl.muted) {
+      if (bgmStarted && bgmEl.muted) {
         bgmEl.muted = false;
+        console.log("用户交互，恢复背景音乐音量");
       }
     };
-    ["click", "touchstart", "keydown"].forEach((ev) => {
-      document.addEventListener(ev, unlock, { passive: true });
+    // 使用 once 确保只触发一次，避免重复执行
+    ["click", "touchstart", "keydown"].forEach(ev => {
+      document.addEventListener(ev, unlock, { once: true });
     });
-  }
-
-  function playMergeSound() {
-    if (!mergeSoundPending) return;
-    mergeSoundPending = false;
-
-    const pool = MANIFEST.mergeSounds || [];
-    const url = pickRandom(pool);
-    if (!url) return;
-    const audio = new Audio(assetUrl(url));
-    audio.volume = MERGE_VOLUME;
-    audio.play().catch(() => {});
   }
 
   function getFruitSrc(level) {
@@ -252,11 +257,13 @@
     ctx.fillStyle = "rgba(165,156,91,0.2)";
     ctx.fillRect(0, 0, width, height);
 
-    Composite.allBodies(world).forEach((b) => {
-      if (b.label === "fruit") {
-        drawFruitAt(b.fruitLevel, b.position.x, b.position.y, b.angle, 1);
-      }
-    });
+    if (world) {
+      Composite.allBodies(world).forEach((b) => {
+        if (b.label === "fruit") {
+          drawFruitAt(b.fruitLevel, b.position.x, b.position.y, b.angle, 1);
+        }
+      });
+    }
 
     if (pendingLevel !== null && canDrop && !gameOver) {
       drawFruitAt(pendingLevel, dropX, DROP_Y, 0, 0.85);
@@ -343,7 +350,6 @@
     return body.circleRadius || FRUIT_DEFS[body.fruitLevel].radius;
   }
 
-  /** 判定可合并：须明显重叠或贴住（避免隔空相消） */
   function shouldMergeContact(a, b) {
     const ra = fruitRadius(a);
     const rb = fruitRadius(b);
@@ -393,7 +399,6 @@
     }
   }
 
-  /** 每帧扫描可合并对；多轮以处理同帧连锁 */
   function checkMerges() {
     for (let round = 0; round < 4; round++) {
       let merged = false;
@@ -433,7 +438,7 @@
       bestEl.textContent = bestScore;
       localStorage.setItem("suika_best", String(bestScore));
     }
-    playMergeSound();
+    playMergeSound();   // 每次合并都尝试播放，但内部 mergeSoundPending 保证一次投掷只播放一次
     return true;
   }
 
@@ -451,7 +456,7 @@
     const x = clampDropX(level);
     createFruitBody(level, x, DROP_Y + FRUIT_DEFS[level].radius);
 
-    mergeSoundPending = true;
+    mergeSoundPending = true;   // 新一轮投掷，允许播放一次合并音效
     canDrop = false;
     pendingLevel = null;
 
@@ -672,6 +677,9 @@
 
     if (world) rebuildWalls();
     dropX = width / 2;
+
+    // 强制重绘，避免白屏
+    drawScene();
   }
 
   function clearFruits() {
@@ -717,6 +725,7 @@
     loadFruitImages();
     applyRandomBackground();
     initBgm();
+    preloadMergeSound();            // 预加载音效
     resize();
     window.addEventListener("resize", resize);
 
